@@ -5,8 +5,8 @@ const FALLBACK =
   "Сейчас не удалось быстро получить ответ. Попробуйте задать вопрос ещё раз.";
 
 // Временные ограничения
-const SERPER_TIMEOUT = 500;
-const GEMINI_TIMEOUT = 3500;
+const SERPER_TIMEOUT = 1000;
+const GEMINI_TIMEOUT = 3000;
 const MAX_RESPONSE_TIME = 4200;
 
 function send(res, status, obj) {
@@ -368,6 +368,56 @@ async function search(q, key) {
 
     const d = await r.json();
 
+    const items = (d.organic || [])
+      .slice(0, 3)
+      .map((x, i) => {
+        const title = (x.title || "").replace(/\s+/g, " ").trim();
+        const snippet = (x.snippet || "").replace(/\s+/g, " ").trim();
+
+        if (!title && !snippet) return "";
+
+        return `${i + 1}. ${title}. ${snippet}`;
+      })
+      .filter(Boolean);
+
+    return items.join(" ").slice(0, 1800);
+
+  } catch (e) {
+    console.error(
+      "Serper request failed:",
+      e.message || String(e)
+    );
+
+    return "";
+  }
+}
+
+  try {
+    const r = await timedFetch(
+      "https://google.serper.dev/search",
+      {
+        method: "POST",
+        headers: {
+          "X-API-KEY": key,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          q,
+          gl: "ru",
+          hl: "ru",
+          num: 5
+        })
+      },
+      SERPER_TIMEOUT
+    );
+
+    if (!r.ok) {
+      console.error("Serper HTTP error:", r.status);
+      return "";
+    }
+
+    const d = await r.json();
+
     const result = (d.organic || [])
       .slice(0, 5)
       .map(
@@ -527,41 +577,51 @@ export default async function handler(req, res) {
     let a = arithmetic(q, h, b);
 
     // Если это не вычисление — обращаемся к Gemini
-    if (!a && process.env.GEMINI_API_KEY) {
-      let ctx = "";
+// Если это не вычисление — используем поиск или Gemini
+if (!a && process.env.GEMINI_API_KEY) {
+  let ctx = "";
 
-      // Serper запускаем только для запросов об актуальной информации
-      if (process.env.SERPER_API_KEY) {
-        ctx = await search(
+  const needsSearch =
+    /(найди|поищи|последн|сегодня|сейчас|новост|курс|погода|актуальн)/i.test(q);
+
+  // Сначала пробуем получить актуальные сведения
+  if (needsSearch && process.env.SERPER_API_KEY) {
+    ctx = await search(
+      q,
+      process.env.SERPER_API_KEY
+    );
+  }
+
+  // Если поиск дал результаты — сразу отвечаем ими.
+  // Не тратим время на дополнительный запрос к Gemini.
+  if (ctx) {
+    a = ctx;
+  } else {
+    // Если поиск не сработал — используем Gemini
+    const elapsed = Date.now() - start;
+
+    if (elapsed < MAX_RESPONSE_TIME - 200) {
+      try {
+        a = await gemini(
           q,
-          process.env.SERPER_API_KEY
+          h,
+          process.env.GEMINI_API_KEY,
+          ""
         );
-      }
-
-      // Проверяем оставшееся время
-      const elapsed = Date.now() - start;
-
-      if (elapsed < MAX_RESPONSE_TIME - 200) {
-        try {
-          a = await gemini(
-            q,
-            h,
-            process.env.GEMINI_API_KEY,
-            ctx
-          );
-        } catch (e) {
-          console.error(
-            "Gemini request failed:",
-            e.message || String(e)
-          );
-        }
-      } else {
+      } catch (e) {
         console.error(
-          "Gemini skipped: insufficient time",
-          elapsed
+          "Gemini request failed:",
+          e.message || String(e)
         );
       }
+    } else {
+      console.error(
+        "Gemini skipped: insufficient time",
+        elapsed
+      );
     }
+  }
+}
 
     if (!a) {
       a = FALLBACK;

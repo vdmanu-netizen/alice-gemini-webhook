@@ -392,57 +392,7 @@ async function search(q, key) {
   }
 }
 
-  try {
-    const r = await timedFetch(
-      "https://google.serper.dev/search",
-      {
-        method: "POST",
-        headers: {
-          "X-API-KEY": key,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          q,
-          gl: "ru",
-          hl: "ru",
-          num: 5
-        })
-      },
-      SERPER_TIMEOUT
-    );
-
-    if (!r.ok) {
-      console.error("Serper HTTP error:", r.status);
-      return "";
-    }
-
-    const d = await r.json();
-
-    const result = (d.organic || [])
-      .slice(0, 5)
-      .map(
-        x =>
-          (x.title || "") +
-          " " +
-          (x.snippet || "") +
-          " " +
-          (x.link || "")
-      )
-      .join("\n")
-      .slice(0, 3500);
-
-    return result;
-  } catch (e) {
-    console.error(
-      "Serper request failed:",
-      e.message || String(e)
-    );
-
-    return "";
-  }
-}
-
-// Извлечение текста из ответа Interactions API
+  // Извлечение текста из ответа Interactions API
 function output(d) {
   if (
     typeof d.output_text === "string" &&
